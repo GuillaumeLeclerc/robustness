@@ -104,6 +104,14 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
 
         dataset = self.decode(dataset)
 
+        if shuffle_size > 1:
+            dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
+                                   shuffle_size)
+        if augmenter:
+            dataset = dataset.map(partial(apply_augmenter, factory=self,
+                                          transform=augmenter.transform_sample_data,
+                                          transform_label=augmenter.transform_sample_label))
+
         return dataset
 
 
