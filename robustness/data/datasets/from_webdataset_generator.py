@@ -1,5 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from functools import partial
+import traceback
+import sys
 
 import torch as ch
 from torch.utils.data import IterableDataset, DataLoader
@@ -50,13 +52,18 @@ class EpochSeparator(IterableDataset):
     def __init__(self, dataset):
         self.it = iter(dataset)
         self.epoch = -1
+        self.just_iter = False
         self.value = None
 
     def __iter__(self):
+        if self.just_iter:
+            return self
+        self.just_iter = True
         self.epoch += 1
         return self
 
     def __next__(self):
+        self.just_iter = False
         result = None
         if self.value is not None:
             result = self.value
@@ -66,6 +73,7 @@ class EpochSeparator(IterableDataset):
 
         epoch, data = result
         if epoch > self.epoch:
+            print("STOP")
             self.value = result
             raise StopIteration()
         else:
@@ -90,37 +98,40 @@ class EpochAdder(IterableDataset):
             self.it = iter(self.dataset)
             return next(self)
 
+def augmentation_applier(d, augmenter, factory):
+    for x in d:
+        yield augmenter.apply_batch(x, factory)
+
+def accelerate_unwrapper(d):
+    for x in d:
+        yield x[0]
+
 
 class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
 
     def __init__(self, shards):
         self.shards = shards
 
-    def generate_sample_dataset(self, augmenter: Augmenter = None,
-                 shuffle_size: int = 0) -> IterableDataset:
-        dataset = wds.WebDataset(self.shards, shardshuffle=shuffle_size > 0)
-
-        dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
-                               shuffle_size)
-
-        dataset = self.decode(dataset)
-
-        if shuffle_size > 1:
-            dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
-                                   shuffle_size)
-        if augmenter:
-            dataset = dataset.map(partial(augmenter.apply_sample, factory=self))
-
-        return dataset
-
-
     def generate_batched_dataset(self, batch_size, num_workers=0,
                                  augmenter: Augmenter = None,
                                  shuffle_size: int = 0, pin_memory=True,
                                  device='cpu'):
         num_workers = min(num_workers, len(self.shards))
-        dataset = self.generate_sample_dataset(augmenter, shuffle_size)
-        dataset = dataset.then(wds.iterators.batched, batchsize=batch_size, collation_fn=custom_collation_fn)
+
+        dataset = wds.WebDataset(self.shards, shardshuffle=shuffle_size > 0)
+        dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
+                               shuffle_size)
+        dataset = self.decode(dataset)
+ 
+        if shuffle_size > 1:
+            dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
+                                   shuffle_size)
+
+        if augmenter:
+            dataset = dataset.map(partial(augmenter.apply_sample, factory=self))
+        dataset = dataset.then(wds.iterators.batched,
+                               batchsize=batch_size,
+                               collation_fn=custom_collation_fn)
         dataset = EpochAdder(dataset)
         dataset = DataLoader(dataset, batch_size=None, num_workers=num_workers,
                              pin_memory=pin_memory, worker_init_fn=worker_init,
@@ -128,9 +139,10 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
         dataset = prepare_data_loader(dataset, device=device,
                                       put_on_device=True)
         # accelerate adds some extra wrapping for some reason
-        dataset = (x[0] for x in dataset) 
+        dataset = wds.Processor(dataset, accelerate_unwrapper)
         dataset = EpochSeparator(dataset)
-        dataset = (augmenter.apply_batch(x, self) for x in dataset)
+        dataset = wds.Processor(dataset, augmentation_applier,
+                                augmenter=augmenter, factory=self)
         return dataset
 
     @abstractmethod
