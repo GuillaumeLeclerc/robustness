@@ -5,7 +5,7 @@ import torch as ch
 from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
 import webdataset as wds
-import random
+from accelerate.data_loader import prepare_data_loader
 
 from .dataset_factory import DatasetFactory
 from .device_copier import DeviceCopier
@@ -41,10 +41,11 @@ def custom_collation_fn(samples, combine_tensors=True, combine_scalars=True):
         else:
             b = list(b)
         result.append(b)
+    result = tuple(result)
     return result
 
 
-class EpochSeparator:
+class EpochSeparator(IterableDataset):
 
     def __init__(self, dataset):
         self.it = iter(dataset)
@@ -108,9 +109,7 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
             dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
                                    shuffle_size)
         if augmenter:
-            dataset = dataset.map(partial(apply_augmenter, factory=self,
-                                          transform=augmenter.transform_sample_data,
-                                          transform_label=augmenter.transform_sample_label))
+            dataset = dataset.map(partial(augmenter.apply_sample, factory=self))
 
         return dataset
 
@@ -123,13 +122,15 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
         dataset = self.generate_sample_dataset(augmenter, shuffle_size)
         dataset = dataset.then(wds.iterators.batched, batchsize=batch_size, collation_fn=custom_collation_fn)
         dataset = EpochAdder(dataset)
-
         dataset = DataLoader(dataset, batch_size=None, num_workers=num_workers,
                              pin_memory=pin_memory, worker_init_fn=worker_init,
                              shuffle=False, sampler=None)
-
+        dataset = prepare_data_loader(dataset, device=device,
+                                      put_on_device=True)
+        # accelerate adds some extra wrapping for some reason
+        dataset = (x[0] for x in dataset) 
         dataset = EpochSeparator(dataset)
-        dataset = DeviceCopier(dataset, device, self, augmenter)
+        dataset = (augmenter.apply_batch(x, self) for x in dataset)
         return dataset
 
     @abstractmethod

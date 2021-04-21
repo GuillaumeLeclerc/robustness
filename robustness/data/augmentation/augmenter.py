@@ -38,3 +38,11 @@ class Augmenter(ABC):
         if len(label_batch) == 1:
             return label_batch[0]
         return label_batch
+
+    def apply_batch(self, batch_data, factory):
+        return apply_augmenter(batch_data, factory, self.transform_batch_data,
+                               self.transform_batch_label)
+
+    def apply_sample(self, sample_data, factory):
+        return apply_augmenter(sample_data, factory, self.transform_sample_data,
+                               self.transform_sample_label)
