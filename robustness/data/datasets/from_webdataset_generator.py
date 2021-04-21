@@ -73,7 +73,6 @@ class EpochSeparator(IterableDataset):
 
         epoch, data = result
         if epoch > self.epoch:
-            print("STOP")
             self.value = result
             raise StopIteration()
         else:
