@@ -140,8 +140,9 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
         # accelerate adds some extra wrapping for some reason
         dataset = wds.Processor(dataset, accelerate_unwrapper)
         dataset = EpochSeparator(dataset)
-        dataset = wds.Processor(dataset, augmentation_applier,
-                                augmenter=augmenter, factory=self)
+        if augmenter is not None:
+            dataset = wds.Processor(dataset, augmentation_applier,
+                                    augmenter=augmenter, factory=self)
         return dataset
 
     @abstractmethod
