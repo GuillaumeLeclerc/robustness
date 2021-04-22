@@ -118,11 +118,12 @@ class FromWebDatasetFactory(DatasetFactory, metaclass=ABCMeta):
         num_workers = min(num_workers, len(self.shards))
 
         dataset = wds.WebDataset(self.shards, shardshuffle=shuffle_size > 0)
-        dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
-                               shuffle_size)
+        if shuffle_size > 0:
+            dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
+                                   shuffle_size)
         dataset = self.decode(dataset)
  
-        if shuffle_size > 1:
+        if shuffle_size > 0:
             dataset = dataset.then(wds.iterators.shuffle, shuffle_size,
                                    shuffle_size)
 
